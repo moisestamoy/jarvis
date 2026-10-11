@@ -1,0 +1,13 @@
+{
+  "name": "jarvis",
+  "private": true,
+  "type": "module",
+  "description": "JARVIS de Moisés: bridge WhatsApp (Kapso) → Claude Code. Sin dependencias.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "simular": "node scripts/simular.mjs"
+  },
+  "license": "MIT"
+}

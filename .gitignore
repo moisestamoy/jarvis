@@ -1,0 +1,13 @@
+# runtime
+state.json
+state.json.*
+*.log
+logs/
+node_modules/
+.env
+*.env
+!.env.example
+# HUD compilado (npm run build en jarvis-ui lo deja en ../jarvis)
+jarvis-ui/node_modules/
+jarvis-ui/dist/
+/jarvis/

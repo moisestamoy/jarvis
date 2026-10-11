@@ -1,0 +1,19 @@
+# Un lunes con JARVIS (Claude falso). Correr: node scripts/simular.mjs scripts/demo.txt
+# 08:20 Lisboa: primer mensaje del día → reporte de claridad + botones
+buenos días
+/boton prio:hecho
+/boton c:c-0001:manana
+# 09:25: la daily de AntoEcom empieza en 5 min → aviso
+/hora 2026-10-12T09:25
+# 11:10: en la daily de Fiama → JARVIS está en silencio
+/hora 2026-10-12T11:10
+/estado
+/hora 2026-10-12T11:31
+# Cambio de zona
+estoy en Bogotá
+/estado
+/zona Europe/Lisbon
+# 22:30 Lisboa: cierre del día (30 min antes del silencio)
+/hora 2026-10-12T22:30
+/boton caos:2
+/memoria metricas/2026-10-12.json
