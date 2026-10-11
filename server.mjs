@@ -1,4 +1,4 @@
-// JARVIS de Moisés: bridge WhatsApp (Kapso) → Claude Code, con HUD de voz en /jarvis.
+// JARVIS de Moisés: bridge Telegram o WhatsApp (Kapso) → Claude Code, con HUD de voz en /jarvis.
 // Basado en github.com/NikQuila/jarvis (MIT). Sin dependencias: solo Node.
 // La lógica vive en lib/app.mjs; aquí se arman los clientes reales y el servidor HTTP.
 import http from 'node:http';
@@ -11,6 +11,8 @@ import { cargarEnv } from './lib/env.mjs';
 import { leerConfig, faltantes } from './lib/config.mjs';
 import { crearEstado } from './lib/estado.mjs';
 import { crearKapso, remitente, leerEntrada } from './lib/kapso.mjs';
+import { crearTelegram, normalizar, tecladoSinGrupo, escuchar, descargarAudio } from './lib/telegram.mjs';
+import { transcribir } from './lib/transcribir.mjs';
 import { crearClaude } from './lib/claude.mjs';
 import { crearCalendario, urlLogin } from './lib/calendario.mjs';
 import { crearWhoop } from './lib/whoop.mjs';
@@ -29,7 +31,9 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 const estado = crearEstado(path.join(DIR, 'state.json'), log);
 const SISTEMA = fs.readFileSync(process.env.SYSTEM_PROMPT_FILE || path.join(DIR, 'system-prompt.md'), 'utf8');
 
-const kapso = crearKapso({ apiKey: cfg.kapsoApiKey, phoneNumberId: cfg.phoneNumberId, dryRun: cfg.dryRun, log });
+// El canal: Telegram (por defecto) o WhatsApp vía Kapso. Ambos exponen texto, plantilla, botones y lista.
+const tg = cfg.canal === 'telegram' ? crearTelegram({ token: cfg.telegramToken, dryRun: cfg.dryRun, log }) : null;
+const chat = tg || crearKapso({ apiKey: cfg.kapsoApiKey, phoneNumberId: cfg.phoneNumberId, dryRun: cfg.dryRun, log });
 const claude = crearClaude({ bin: cfg.claudeBin, timeoutMs: cfg.timeoutMs, estado, log });
 const calendario = cfg.google.clientId ? crearCalendario({ ...cfg.google, dryRun: cfg.dryRun, log }) : null;
 const whoop = crearWhoop({ dir: DIR, tokensFile: cfg.whoop.tokensFile });
@@ -38,7 +42,7 @@ const metricas = crearMetricas(memoria);
 
 // ---------- conexiones (Google y WHOOP) ----------
 // El login solo funciona con un código de un solo uso: así nadie más puede conectar SU cuenta a tu servidor.
-// El código sale en los logs al arrancar (si falta conectar) o pidiéndolo por WhatsApp: "/conectar google".
+// El código sale en los logs al arrancar (si falta conectar) o pidiéndolo por chat: "/conectar google".
 const codigos = {};
 const base = () => (cfg.google.redirect || cfg.whoop.redirect || 'https://TU-HOST/x').replace(/\/[^/]+\/callback$/, '');
 function nuevoCodigo(servicio) {
@@ -54,7 +58,7 @@ async function comandos(texto) {
   return `Abra este enlace para conectar ${s === 'google' ? 'Google Calendar' : 'WHOOP'} (sirve una vez):\n${nuevoCodigo(s)}`;
 }
 
-const app = crearApp({ cfg, estado, kapso, claude, calendario, whoop, memoria, metricas, sistema: SISTEMA, log, comandos });
+const app = crearApp({ cfg, estado, chat, claude, calendario, whoop, memoria, metricas, sistema: SISTEMA, log, comandos });
 
 // ---------- webhook de Kapso ----------
 const vistos = new Set();
@@ -90,13 +94,55 @@ function webhook(req, res) {
     // WhatsApp manda un álbum como un "unsupported" seguido de las fotos: solo se responde si no llega nada más.
     if (eventos.every(esNoSoportado)) {
       clearTimeout(temporizadorNoSoportado);
-      temporizadorNoSoportado = setTimeout(() => kapso.texto(cfg.owner, 'Me llegó un mensaje que no puedo leer, señor. Mándelo como texto, audio o archivo.'), 30_000);
+      temporizadorNoSoportado = setTimeout(() => chat.texto(cfg.owner, 'Me llegó un mensaje que no puedo leer, señor. Mándelo como texto, audio o archivo.'), 30_000);
       return;
     }
     clearTimeout(temporizadorNoSoportado);
     const validos = eventos.filter((e) => !esNoSoportado(e));
-    if (app.ocupado() && !avisoRecibido) { avisoRecibido = true; kapso.texto(cfg.owner, '📥 Recibido. Termino lo anterior y sigo con esto.'); }
-    app.encolar(async () => { avisoRecibido = false; await app.manejarEntrada(validos); });
+    if (app.ocupado() && !avisoRecibido) { avisoRecibido = true; chat.texto(cfg.owner, '📥 Recibido. Termino lo anterior y sigo con esto.'); }
+    app.encolar(async () => { avisoRecibido = false; await app.manejarEntrada(validos.map((e) => leerEntrada(e.message || {}))); });
+  });
+}
+
+// ---------- Telegram ----------
+async function updateTelegram(u) {
+  const n = normalizar(u);
+  if (!n) return;
+  if (!cfg.owner) {
+    // Primera puesta en marcha: todavía no sabemos quién es el dueño. Le decimos su ID a quien escriba.
+    log(`Telegram: mensaje del ID ${n.de}. Si eres tú, pon OWNER_TELEGRAM_ID=${n.de} en el .env y reinicia.`);
+    await chat.texto(n.chat, `Tu ID de Telegram es ${n.de}. Ponlo en OWNER_TELEGRAM_ID en el .env del servidor y reinicia JARVIS.`);
+    return;
+  }
+  if (n.de !== cfg.owner || String(n.chat) !== cfg.owner) { log('ignorado: mensaje de Telegram de alguien que no es el dueño'); return; }
+  if (n.callback) {
+    // Quita el "cargando" del botón y los botones de esa misma decisión, para no tocarlos dos veces.
+    tg.llamar('answerCallbackQuery', { callback_query_id: n.callback.id }).catch(() => {});
+    if (n.callback.message) {
+      tg.llamar('editMessageReplyMarkup', { chat_id: n.chat, message_id: n.callback.message.message_id, reply_markup: tecladoSinGrupo(n.callback.message.reply_markup, n.entrada.botonId) }).catch(() => {});
+    }
+  } else if (!n.entrada.texto && !n.voz) {
+    await chat.texto(cfg.owner, 'Por ahora leo texto y audios, señor.');
+    return;
+  }
+  if (app.ocupado() && !avisoRecibido) { avisoRecibido = true; chat.texto(cfg.owner, '📥 Recibido. Termino lo anterior y sigo con esto.'); }
+  app.encolar(async () => {
+    avisoRecibido = false;
+    if (n.voz) {
+      try {
+        chat.escribiendo(cfg.owner);
+        const audio = await descargarAudio(tg, cfg.telegramToken, n.voz.file_id);
+        n.entrada.texto = await transcribir(audio, { key: cfg.elevenKey, modelo: process.env.ELEVENLABS_STT_MODEL });
+        n.entrada.duracion = n.voz.duration || 0;
+        log(`audio de ${n.entrada.duracion} s transcrito`);
+      } catch (e) {
+        log('audio:', e.message);
+        await chat.texto(cfg.owner, `No pude transcribir el audio (${e.message}). Mándemelo por escrito, señor.`);
+        return;
+      }
+    }
+    if (n.entrada.texto) chat.escribiendo(cfg.owner);
+    await app.manejarEntrada([n.entrada]);
   });
 }
 
@@ -296,10 +342,14 @@ http.createServer((req, res) => {
   if (url.pathname === '/jarvis') return void res.writeHead(302, { Location: '/jarvis/' + url.search }).end();
   if (url.pathname.startsWith('/jarvis/')) return hud(req, res, url);
   if (req.method === 'GET' && /^\/(google|whoop)\//.test(url.pathname)) return conexiones(req, res, url);
-  if (req.method === 'POST' && url.pathname === '/webhook') return webhook(req, res);
+  if (req.method === 'POST' && url.pathname === '/webhook' && cfg.canal === 'kapso') return webhook(req, res);
   res.writeHead(404).end();
 }).listen(cfg.port, '127.0.0.1', () => {
   log(`escuchando en 127.0.0.1:${cfg.port}${cfg.dryRun ? ' (DRY_RUN)' : ''} · memoria: ${cfg.memoria} · zona: ${app.tz()}`);
+  if (tg) {
+    if (!cfg.owner) log('OWNER_TELEGRAM_ID vacío: escríbele al bot y te dirá tu ID.');
+    escuchar({ tg, estado, onUpdate: updateTelegram, log });
+  }
   if (estado.recuperado) log('aviso: state.json estaba corrupto y se reinició');
   if (calendario && !calendario.conectado()) log(`Google Calendar sin conectar. Abre: ${nuevoCodigo('google')}`);
   if (cfg.whoop.clientId && !whoop.conectado()) log(`WHOOP sin conectar. Abre: ${nuevoCodigo('whoop')}`);
