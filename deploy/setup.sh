@@ -25,7 +25,7 @@ fi
 # Usuario sin privilegios que corre todo
 id $U >/dev/null 2>&1 || useradd -m -s /bin/bash $U
 mkdir -p /home/$U/.ssh /home/$U/.config/jarvis
-cp /root/.ssh/authorized_keys /home/$U/.ssh/authorized_keys
+[ -f /root/.ssh/authorized_keys ] && cp /root/.ssh/authorized_keys /home/$U/.ssh/authorized_keys
 # Dos deploy keys: una de solo lectura para el código (jarvis) y otra con escritura SOLO para jarvis-memoria.
 [ -f /home/$U/.ssh/jarvis_codigo ] || ssh-keygen -t ed25519 -N '' -C "jarvis codigo (lectura)" -f /home/$U/.ssh/jarvis_codigo
 [ -f /home/$U/.ssh/jarvis_memoria ] || ssh-keygen -t ed25519 -N '' -C "jarvis-memoria (escritura)" -f /home/$U/.ssh/jarvis_memoria
@@ -86,9 +86,9 @@ fi
 
 ufw allow OpenSSH && ufw --force enable
 
+# Asistente de configuración (pide los tokens, detecta tu ID de Telegram y arranca el servicio)
+DIR_SETUP=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo /root)
+[ -f "$DIR_SETUP/configurar.sh" ] && install -m 755 "$DIR_SETUP/configurar.sh" /usr/local/bin/jarvis-configurar
+
 echo
-echo "Listo. Agrega estas deploy keys en GitHub (repo → Settings → Deploy keys):"
-echo "--- jarvis (SIN marcar 'Allow write access') ---"
-cat /home/$U/.ssh/jarvis_codigo.pub
-echo "--- jarvis-memoria (MARCANDO 'Allow write access') ---"
-cat /home/$U/.ssh/jarvis_memoria.pub
+echo "Servidor listo. Ahora corre:  jarvis-configurar"

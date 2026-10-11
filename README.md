@@ -74,35 +74,27 @@ Con el servidor real, `DRY_RUN=1` hace lo mismo: imprime los mensajes y las acci
 | `JARVIS_TOKEN` | Lo inventas: `openssl rand -hex 24` |
 | `ELEVENLABS_API_KEY` | ElevenLabs → Profile → API key. Transcribe tus audios (y será la voz del HUD en la Fase 3) |
 
-## Despliegue en DigitalOcean (Telegram, sin dominio)
+## Despliegue en DigitalOcean (Telegram, sin dominio): 3 pasos
 
-1. **Bot:** en Telegram, @BotFather → `/newbot`. Guarda el token.
-2. **Droplet:** Ubuntu 24.04, Basic, 1 vCPU / 2 GB (~US$12/mes). Agrega tu llave SSH.
-3. **Preparar el servidor** (sin dominio):
+1. **Bot:** en Telegram, abre **@BotFather** → `/newbot` → nombre `JARVIS` → usuario (ej. `jarvis_moises_bot`). Guarda el token.
+2. **Servidor:** DigitalOcean → **Create → Droplets** → Ubuntu 24.04 → Basic, Regular, 2 GB (~US$12/mes) →
+   autenticación con contraseña o llave, la que prefieras → **Advanced options → Add initialization scripts** → pega
+   **todo** el contenido de [`deploy/cloud-init.sh`](deploy/cloud-init.sh) → **Create Droplet**.
+3. **Configurar:** espera ~5 minutos, entra al droplet → **Access → Launch Droplet Console** y escribe:
    ```bash
-   scp deploy/setup.sh root@IP:/root/ && ssh root@IP 'bash /root/setup.sh'
+   jarvis-configurar
    ```
-   Al final imprime **dos deploy keys**.
-4. **Deploy keys en GitHub** (repo → Settings → Deploy keys → Add deploy key):
-   - en `jarvis`: la llave `jarvis codigo`, **sin** marcar *Allow write access*;
-   - en `jarvis-memoria`: la llave `jarvis-memoria`, **marcando** *Allow write access*.
-   Así el servidor solo puede escribir en la memoria, y en ningún otro repo.
-5. **Clonar y configurar** (como usuario `jarvis`):
-   ```bash
-   ssh jarvis@IP
-   git clone git@github-jarvis:moisestamoy/jarvis.git
-   git clone git@github-memoria:moisestamoy/jarvis-memoria.git
-   git config --global user.name "JARVIS" && git config --global user.email "jarvis@localhost"
-   claude setup-token        # copia el token que te da
-   cp jarvis/.env.example ~/.config/jarvis/jarvis.env && chmod 600 ~/.config/jarvis/jarvis.env
-   nano ~/.config/jarvis/jarvis.env   # TELEGRAM_BOT_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, ELEVENLABS_API_KEY
-   ```
-6. **Arrancar y darte de alta:**
-   ```bash
-   sudo systemctl enable --now jarvis
-   ```
-   Escríbele a tu bot. Te responde con tu ID: ponlo en `OWNER_TELEGRAM_ID` y `sudo systemctl restart jarvis`.
-7. **Primer mensaje:** escríbele "hola". Como `perfil.md` está vacío, arranca el onboarding.
+   Te guía: dos llaves que pegas en GitHub, el token del bot, le escribes "hola" al bot (así detecta tu ID solo),
+   inicias sesión en Claude con tu plan Max y, opcional, la API key de ElevenLabs para tus audios. Al final JARVIS queda corriendo.
+
+Si `jarvis-configurar` no existe todavía, la instalación sigue en curso: `tail -f /var/log/jarvis-setup.log`.
+
+<details><summary>Instalación manual (sin el script de inicialización)</summary>
+
+```bash
+scp deploy/setup.sh deploy/configurar.sh root@IP:/root/ && ssh root@IP 'bash /root/setup.sh && jarvis-configurar'
+```
+</details>
 
 ### Conectar Google Calendar sin dominio
 1. En Google Cloud, el ID de cliente OAuth (aplicación web) lleva como URI de redirección `http://localhost:8787/google/callback`.
